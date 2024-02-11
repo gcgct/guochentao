@@ -261,4 +261,141 @@ auto_ptr后面隐藏的思想是：使用一个对象来存储需要被自动释
         const auto_ptr<AudioClip> theAudioClip;
     }
 
+**11. 阻止异常传递到析构函数以外**
 
+如果析构函数抛出异常的话，会导致程序直接调用terminate函数，中止程序而不释放对象，所以不应该让异常传递到析构函数外面，而是应该在析构函数里面直接catch并且处理掉
+
+另外，如果析构函数抛出异常的话，那么析构函数就不会完全运行，就无法完成希望做的一些其他事情例如：
+    
+
+    Session::~Session(){
+        logDestruction(this);
+        endTransaction(); //结束database transaction,如果上面一句失败的话，下面这句就没办法正确执行了
+    }
+
+**12. 理解“抛出异常”，“传递参数”和“调用虚函数”之间的不同**
+
+传递参数的函数：
+
+    void f1(Widget w);
+
+catch子句：    
+
+    catch(widget w)... 
+
+上面两行代码的相同点：传递函数参数与异常的途径可以是传值、传递引用或者传递指针
+
+上面两行代码的不同点：系统所需要完成操作的过程是完全不同的。调用函数时程序的控制权还会返回到函数的调用处，但是抛出一个异常时，控制权永远都不会回到抛出异常的地方
+三种捕获异常的方法：
+    
+
+    catch(Widget w);
+    catch(Widget& w);
+    catch(const Widget& w);
+
+一个被抛出的对象可以通过普通的引用捕获，它不需要通过指向const对象的引用捕获，但是在函数调用中不允许传递一个临时对象到一个非const引用类型的参数里面
+同时异常抛出的时候实际上是抛出对象创建的临时对象的拷贝，
+
+另外一个区别就是在try语句块里面，抛出的异常不会进行类型转换（除了继承类和基类之间的类型转换，和类型化指针转变成无类型指针的变换），例如：
+    
+
+    void f(int value){
+        try{
+            throw value; //value可以是int也可以是double等其他类型的值
+        }
+        catch(double d){
+            ....         //这里只处理double类型的异常，如果遇到int或者其他类型的异常则不予理会
+        }
+    }
+
+最后一个区别就是，异常catch的时候是按照顺序来的，即如果两个catch并且存在的话，会优先进入到第一个catch里面，但是函数则是匹配最优的
+
+**13. 通过引用捕获异常**
+
+使用指针方式捕获异常：不需要拷贝对象，是最快的,但是，程序员很容易忘记写static，如果忘记写static的话，会导致异常在抛出后，因为离开了作用域而失效：
+    
+
+    void someFunction(){
+        static exception ex;
+        throw &ex;
+    }
+    void doSomething(){
+        try{
+            someFunction();
+        }
+        catch(exception *ex){...}
+    }
+
+创建堆对象抛出异常：new exception 不会出现异常失效的问题，但是会出现在捕捉以后是否应该删除他们接受的指针，在哪一个层级删除指针的问题
+通过值捕获异常：不会出现上述问题，但是会在被抛出时系统将异常对象拷贝两次，而且会出现派生类和基类的slicing problem，即派生类的异常对象被作为基类异常对象捕获时，会把派生类的一部分切掉，例如：
+    
+
+    class exception{
+    public:
+        virtual const char *what() throw();
+    };
+    class runtime_error : public exception{...};
+    void someFunction(){
+        if(true){
+            throw runtime_error();
+        }
+    }
+    void doSomething(){
+        try{
+            someFunction();
+        }
+        catch(exception ex){
+            cerr << ex.what(); //这个时候调用的就是基类的what而不是runtime_error里面的what了，而这个并不是我们想要的
+        }
+    }
+
+通过引用捕获异常：可以避免上面所有的问题，异常对象也只会被拷贝一次：
+    
+
+    void someFunction(){...} //和上面一样
+    void doSomething(){
+        try{...}             //和上面一样
+        catch(exception& ex){
+            cerr << ex.what(); //这个时候就是调用的runtime_error而不是基类的exception::what()了，其他和上面其实是一样的
+        }
+    }
+
+**14. 审慎地使用异常规格（exception specifications）**
+
+异常规格指的是函数指定只能抛出异常的类型：
+    
+
+    extern void f1();    //f1可以抛出任意类型的异常
+    void f2() throw(int);//f2只能抛出int类型的异常
+    void f2() throw(int){ 
+         f1();           //编译器会因为f1和f2的异常规格不同而在发出异常的时候调用unexpected
+    }
+
+在用模板的时候，会让这种情况更为明显：
+    
+
+    template<class T>
+    bool operator==(const T& lhs, const T&rhs) throw(){
+        return &lhs == &rhs;
+    }
+
+这个模板为所有的类型定义了一个操作符函数operator==对于任意一对相同类型的对象，如果有一样的地址，则返回true，否则返回false，单单这么一个函数可能不会抛出异常，但是如果有operator&重载时，operator&可能会抛出异常，这样就违反了异常规则，让程序跳转到unexpected
+
+阻止程序跳转到unexpected的三种方法：
+将所有的unexpected异常都替换成UnexpectedException对象：
+    
+
+    class UnexpectedException{}; //所有的unexpected异常对象都被替换成这种对象
+    void convertUnexpected(){       //如果一个unexpected异常被抛出，这个函数就会被调用
+        throw UnexpectedException();
+    }
+    set_unexpected(convertUnexpected);
+
+替换unexpected函数：
+
+    void convertUnexpected(){ //如果一个unexpected异常被抛出，这个函数被调用
+        throw;                //只是重新抛出当前的异常
+    }
+    set_unexpected(convertUnexpected);//安装convertUnexpected作为unexpected的替代品，此方法应该在所有的异常规格里面包含bad_exception
+
+总结：异常规格应该在加入之前谨慎的考虑它带来的行为是否是我们所希望的
