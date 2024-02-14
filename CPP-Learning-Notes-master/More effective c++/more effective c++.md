@@ -458,3 +458,103 @@ prefetching是另一种方法，例如从磁盘读取数据的时候，一次读
 另外再如operator+重载函数中，函数的返回值是临时的，因为它没有被命名。
 
 所以在任何时候只要见到函数中的常量引用参数，就存在建立临时对象的可能性
+
+**20. 协助编译器实现返回值优化**
+
+一个返回一整个对象的函数，效率是很低的，因为需要调用对象的析构和构造函数。但是有时候编译器会帮助优化我们的实现：
+    
+
+    inline const Rational operator*(const Rational& lhs, const Rational& rhs{
+        return Rational(lhs.numerator() * rhs.numerator(), lhs.denominator() * rhs.denominator());
+    }
+
+上面这个操作实在是太骚了，初看起来好像是会创建一个Rational的临时对象，但是实际上编译器会把这个临时对象给优化掉，所以就免除了析构和构造的开销，而inline还可以减少函数的调用开销
+
+**21. 通过函数重载避免隐式类型转换**
+
+改代码之前：
+
+    class UPInt{
+        public:
+        UPInt();
+        UPInt(int value);
+    }
+    const UPInt operator+(const UPInt& lhs, const UPInt& rhs);
+    upi3 = upi1 + upi2;
+    upi3 = 10 + upi1;  // 会产生隐式类型转换，转换过程中会出现临时对象
+    upi3 = upi1 + 10;
+
+改代码之后：
+    
+
+    const UPInt operator+(const UPInt& lhs, const UPInt& rhs);
+    const UPInt operator+(const UPInt& lhs, int rhs);
+    const UPInt operator+(int lhs, const UPInt& rhs);
+
+**22. 考虑使用op=来取代单独的op运算符**
+
+operator+ 和operator+=是不一样的，所以如果想要重载+号，就最好重载+=，那么一个比较好的方法就是把+号用+=来实现，当然如果可以的话，可以使用模板编写：
+    
+
+    template<class T>
+    const T operator+(const T& lhs, const T& rhs)
+    {
+        return T(lhs) += rhs;
+    }
+    template<class T>
+    const T operator-(const T& lhs, const T& rhs){
+        return T(lhs) -= rhs; 
+    }
+
+
+**23. 考虑使用其他等价的程序库**
+
+例如stdio和iostream两个程序库都有输入输出的功能，但是stdio库则速度更快，iostream则写起来更安全。需要合理的选择应用的替代库
+
+**24. 理解虚函数、多重继承、虚基类以及RTTI所带来的开销**
+
+C++的特性和编译器会很大程度上影响程序的效率，所以我们有必要知道编译器在一个C++特性后面做了些什么事情。
+
+例如虚函数，指向对象的指针或者引用的类型是不重要的，大多数编译器使用的是virtual table(vtbl)和virtual table pointers(vptr)来进行实现
+
+vtbl:  
+
+    class C1{
+    public:
+        C1();
+        virtual ~C1();
+        virtual void f1();
+        virtual int f2(char c)const;
+        virtual void f3(const string& s);
+        void f4()const
+    }
+
+vtbl的虚拟表类似于下面这样,只有虚函数在里面，非虚函数的f4不在里面：
+
+     ___
+    |___| → ~C1()
+    |___| → f1()
+    |___| → f2()
+    |___| → f3()
+
+如果按照上面的这种，每一个虚函数都需要一个地址空间的话，那么如果拥有大量虚函数的类，就会需要大量的地址存储这些东西，这个vtbl放在哪里根据编译器的不同而不同
+
+vptr：
+
+     __________
+    |__________| → 存放类的数据
+    |__________| → 存放vptr
+
+每一个对象都只存储一个指针，但是在对象很小的时候，多于的vptr将会看起来非常占地方。在使用vptr的时候，编译器会先通过vptr找到对应的vtbl，然后通过vtbl开始找到指向的函数
+事实上对于函数：
+    
+
+    pC1->f1();
+
+他的本质是：
+
+    (*pC1->vptr[i])(pC1);
+
+在使用多继承的时候，vptr会占用很大的地方，并且非常恶心，所以不要用多继承
+
+RTTI：能够让我们在runtime找到对象的类信息，那么就肯定有一个地方存储了这些信息，这个特性也可以使用vtbl实现，把每一个对象，都添加一个隐形的数据成员type_info，来存储这些东西，从而占用很大的空间
