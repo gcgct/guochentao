@@ -558,3 +558,137 @@ vptr：
 在使用多继承的时候，vptr会占用很大的地方，并且非常恶心，所以不要用多继承
 
 RTTI：能够让我们在runtime找到对象的类信息，那么就肯定有一个地方存储了这些信息，这个特性也可以使用vtbl实现，把每一个对象，都添加一个隐形的数据成员type_info，来存储这些东西，从而占用很大的空间
+
+#### 五、技巧
+
+**25. 使构造函数和非成员函数具有虚函数的行为**
+
+    class NewsLetter{
+    private:
+        static NLComponent *readComponent(istream& str);
+        virtual NLComponent *clone() const = 0;
+    };
+    NewsLetter::NewsLetter(istream& str){
+        while(str){
+            components.push_back(readComponent(str));
+        }
+    }
+    class TextBlock: public NLComponent{
+    public:
+        virtual TextBlock*clone()const{
+            return new TextBlock(*this);
+        }
+    }
+
+在上面那段代码当中，readComponent就是一个具有构造函数行为（因为能够创建出新的对象）的函数，我们叫做虚拟构造函数
+
+clone() 叫做虚拟拷贝构造函数,相当于拷贝一个新的对象
+
+通过这种方法，我们上面的NewsLetter构造函数就可以这样：
+
+    NewsLetter::NewsLetter(const NewsLetter& rhs){
+        while(str){
+            for(list<NLComponent*>::const_iterator it=rhs.component.begin(); it!=rhs.component.end();it++){
+                components.push_back((*it)->clone());
+            }
+        }
+    }
+
+这样每一个TextBlock都可以调用他自己的clone，其他的子类也可以调用他们自己对应的clone()
+
+**26. 限制类对象的个数**
+
+比如某个类只应该有一个对象，那么最简单的限制这个个数的方法就是把构造函数放在private域里面，这样每个人都没有权力创建对象
+
+或者做一个约束，每次创建的时候都返回static的对象：
+    
+
+    class Printer{
+    public:
+        friend Printer& thePrinter();或者static Printer& thePrinter();
+    private:
+        Printer();
+        Printer(const Printer& rhs);
+    };
+    Printer& thePrinter(){
+        static Printer p;
+        return p;
+    }
+
+上面这段代码中，Printer类的构造函数是private，可以阻止建立对象，全局函数thePrinter被声明为类的友元，让thePrinter避免私有构造函数引起的限制
+
+创建对象的环境：
+当然还有一个直观的方法来限制对象的个数，就是添加一个名为numObjects的static变量，来记录对象的个数，当然这种方法在出现继承的时候会出现问题（一个Printer和一个继承自Printer的colorPrinter同时存在的时候，就会超出numObjects个数，这个时候就需要限制继承
+
+允许对象来去自由：
+如果使用伪构造函数的话，会导致对象销毁后，无法创建新的对象，解决方法就是一起使用上面的伪构造函数和计数器。
+
+一个具有对象计数功能的基类：
+如果拥有大量像Printer这样的类需要进行计数，那么较好的方法就是一次性封装所有的计数功能,需要确保每个进行实例计数的类都有一个相互隔离的计数器，所以模板会比较好:
+    
+
+    template <class BeingCounted>
+    class Counted{
+    public:
+        class TooManyObjects{};
+        static int objectCount(){return numObjects;}
+    protected:
+        Counted();
+        Counted(const Counted& rhs);
+        ~Counted(){ --numObjects; }
+    private:
+        static int numObjects;
+        static const size_t maxObjects;
+        void init();                 //避免构造函数的代码重复
+    };
+    
+    template<class BeingCounted>
+    Counted<BeingCounted>::Counted(){init();}
+    
+    template<class BeingCounted>
+    Counted<BeingCounted>::Counted(const Counted<BeingCounted>&){init();}
+    
+    template<class BeingCounted>
+    void Counted<BeingCounted>::init(){
+        if(numObjects >= maxObjects)throw TooManyObjects();
+        ++numObjects;
+    }
+    
+    class Printer:private Counted<Printer>{
+    public:
+        static Printer* makePrinter(); // 伪构造函数
+        using Counted<Printer>::objectCount;
+        using Counted<Printer>::TooManyObjects;
+    }
+
+**27. 要求或禁止对象分配在堆上**
+
+必须在堆中建立对象（程序有自我管理对象的需求）：
+禁用隐式的构造函数和析构函数，例如声明成private，或者仅仅让析构函数成为private（副作用小一些），然后创建一个public的destory()方法来调用析构。
+遇到继承析构的问题的话(现在的做法无法继承)，也可以将析构函数声明成protected的
+
+判断一个对象是否在堆中：
+在构造函数中无法区分是否在堆中，但是在new里面可以做些事情：
+    
+
+    class UPNumber{
+    public:
+        class HeapConstraintViolation{};
+        static void* operator new(size_t size);
+        UPNumber();
+    private:
+        static bool onTheHeap;
+    };
+
+实际上上面这段代码是跑不了的，因为如果使用new[]创造数组的话就没有办法用了
+
+另一种方法是判断变量所在的地址，因为stack是从高位地址向下的，heap是从地位地址向上的：
+    
+
+    bool onHeap(const void *address) { 
+        char onTheStack; // 局部栈变量，因为他是新的变量，所以比他小的都在堆或者静态空间里面，比他大的都在栈里面
+        return address < &onTheStack; 
+    }
+
+禁止堆对象：
+重写operator new就行了，例如弄成private
