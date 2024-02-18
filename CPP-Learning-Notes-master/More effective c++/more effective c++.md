@@ -12,7 +12,7 @@
 
 + 存在不指向任何对象的可能
 + 需要能够在不同的时刻指向不同的对象
-  其他情况应该使用引用
++ 其他情况应该使用引用
 
 **2. 优先考虑C++风格的类型转换**
 
@@ -23,17 +23,19 @@
 主要是考虑以下写法：
     
 
-    class BST{...}
-    class BalancedBST : public BST{...}
-    
-    void printBSTArray(const BST array[]){
-        for(auto i : array){
-            std::cout << *i;
-        }
+```c++
+class BST{...}
+class BalancedBST : public BST{...}
+
+void printBSTArray(const BST array[]){
+    for(auto i : array){
+        std::cout << *i;
     }
-    
-    BalancedBST bBSTArray[10];
-    printBSTArray(bBSTArray);
+}
+
+BalancedBST bBSTArray[10];
+printBSTArray(bBSTArray);
+```
 
 由于我们之前说的，这种情况下编译器是毫无警告的，而对象在传递过程中是按照声明的大小来传递的，所以每一个元素的间隔是sizeof(BST)此时指针就指向了错误的地方
 
@@ -62,33 +64,38 @@
 函数数组的方法，或者是指针：
     
 
-    typedef EP* PEP;
-    PEP bestPieces[10];
-    PEP *bestPieces = new PEP[10];然后使用的时候再重新new来进行初始化
+```c++
+typedef EP* PEP;
+PEP bestPieces[10];
+PEP *bestPieces = new PEP[10];//然后使用的时候再重新new来进行初始化
+```
 
 #### 二、运算符
 
 **5. 小心用户自定义的转换函数**
 
 因为可能会出现一些无法理解的并且也是无能为力的运算，而且在不需要这些类型转换函数的时候，仍然可能会调用这些转换，例如下面的代码：
-    
 
-    // 有理数类
-    class Rational{
-    public:
-        Rational(int numerator = 0, int denominator = 1)
-        operator double() const;
-    }
-    
-    Rational r(1, 2);
-    double d = 0.5 * r; //将r转换成了double进行计算
-    
-    cout << r; //会调用最接近的类型转换函数double，将r转换成double打印出来，而不是想要的1/2，
+```c++
+// 有理数类
+class Rational{
+public:
+    Rational(int numerator = 0, int denominator = 1)
+    operator double() const;
+}
+
+Rational r(1, 2);
+double d = 0.5 * r; //将r转换成了double进行计算
+
+cout << r; //会调用最接近的类型转换函数double，将r转换成double打印出来，而不是想要的1/2，
+```
 
 上面问题的解决方法是，把double变成
     
 
-    double asDouble() const;这样就可以直接用了
+```c++
+double asDouble() const;//这样就可以直接用了
+```
 
 但是即使这样做还有可能会出现隐式转换的现象：
     
@@ -692,3 +699,133 @@ clone() 叫做虚拟拷贝构造函数,相当于拷贝一个新的对象
 
 禁止堆对象：
 重写operator new就行了，例如弄成private
+
+**28. 智能(smart)指针**
+
+auto_ptr：会把值给传出去，原来的指针作废掉
+实现dereference（取出指针所指东西的内容）：
+    template<class T>
+    T& SmartPtr<T>::operaotr*()const{
+        return *pointee;
+    }
+
+    template<class T>
+    T* SmartPtr<T>::operator->()const{
+        return pointee;
+    }
+
+测试smart pointer是否是NULL：
+如果直接使用下面的代码是错误的：
+    
+
+    SmartPtr<TreeNode> ptn;
+    if(ptn == 0)... //error
+    if(ptn)... //error
+    if(!ptn)... //error
+
+所以需要进行隐式类型转换操作符，才能够进行上面的操作
+    
+
+    template<class T>
+    class SmartPtr{
+    public:
+        operator void*();
+    };
+    SmartPtr<TreeNode> ptn;
+    if(ptn == 0) //现在正确
+    if(ptn) //现在正确
+    if(!ptn) //现在正确
+
+smart pointer 和继承类/基类的类型转换:
+
+    class MusicProduct{....};
+    class Cassette:public MusicProduct{....};
+    class CD:public MusicProduct{....};
+    displayAndPlay(const SmartPtr<MusicProduct>& pmp, int numTimes);
+    
+    SmartPtr<Cassette> funMusic(new Cassette("1234"));
+    SmartPtr<CD> nightmareMusic(new CD("143"));
+    displayAndPlay(funMusic, 10); // 错误!
+    displayAndPlay(nightmareMusic, 0); // 错误!
+
+我们可以看到的是，如果没有隐式转换操作符的话，是没有办法进行转换的，那么解决方法就是添加一个操作符,：
+    
+
+    class SmartPtr<Cassette>{//或者用模板来代替
+    public:
+        operator SmartPtr<MusicProduct>(){
+            return SmartPtr<MusicProduct>(pointee);
+        }
+    };
+
+smart pointer 和 const：
+    
+
+    SmartPtr<CD> p; //non-const 对象 non-const 指针
+    SmartPtr<const CD> p; //const 对象 non-const 指针
+    const SmartPtr<CD> p = &goodCD; //non-const 对象 const 指针
+    const SmartPtr<const CD> p = &goodCD; //const 对象 const 指针
+    
+    template<class T>      // 指向const对象的
+    class SmartPtrToConst{ //灵巧指针
+        ...                // 灵巧指针通常的成员函数
+    protected:
+        union {
+            const T* constPointee; // 让 SmartPtrToConst 访问
+            T* pointee; // 让 SmartPtr 访问
+        };
+    };
+    
+    template<class T> // 指向 non-const 对象的灵巧指针
+    class SmartPtr: public SmartPtrToConst<T> {
+        ... // 没有数据成员
+    };
+
+
+**29. 引用计数**
+就是一个smart pointer，不讨论了
+**30. 代理类**
+
+例子：实现二维数组类：
+    
+
+    template<class T>
+    class Array2D{
+    public:
+        Array2D(int dim1, int dim2);
+        class Array1D{
+        public:
+            T& operator[](int index);
+            const T& operator[](int index) const;
+        };
+        Array1D operator[](int index);
+        const Array1D operator[](int index) const;
+    };
+    Array2D<int> data(10, 20);
+    cout << data[3][6] //这里面的[][]运算符是通过两次重载实现的
+
+例子：代理类区分[]操作符的读写：
+
+采用延迟计算方法，修改operator[]让他返回一个（代理字符的）proxy对象而不是字符对象本身，并且判断之后这个代理字符怎么被使用，从而判断是读还是写操作
+    
+
+    class String{
+    public:
+        class CharProxy{
+        public:
+            CharProxy(String& str, int index);
+            CharProxy& operator=(const CharProxy& rhs);
+            CharProxy& operator=(char c);
+            operator char() const;
+        private:
+            String& theString;
+            int charIndex;
+        };
+        const CharProxy operator[](int index) const;//对于const的Strings
+        CharProxy operator[](int index);            //对于non-const的Strings
+    
+        friend class CharProxy;
+    private:
+        RCPtr<StringValue> value;
+    };
+
