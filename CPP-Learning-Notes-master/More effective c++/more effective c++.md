@@ -47,8 +47,8 @@ printBSTArray(bBSTArray);
     
 
     class EP{
-    public:
-        EP(int ID);
+        public:
+            EP(int ID);
     }
 
 这样的代码会让使用者在某些时候非常的难受，特别是当EP类是虚类的时候。
@@ -61,8 +61,8 @@ printBSTArray(bBSTArray);
         ......
     }
 
-函数数组的方法，或者是指针：
-    
+​	函数数组的方法，或者是指针：
+​    
 
 ```c++
 typedef EP* PEP;
@@ -100,35 +100,39 @@ double asDouble() const;//这样就可以直接用了
 但是即使这样做还有可能会出现隐式转换的现象：
     
 
-    template<class T>
-    class Array{
-    public:
-        Array(int size);
-        T& operator[](int index);
-    };
-    
-    bool operator==(const Array<int> &lhs, const Array<int> & rhs);
-    Array<int> a(10), b(10);
-    if(a == b[3]) //想要写 a[3] == b[3]，但是这时候编译器并不会报错，解决方法是使用explicit关键字
-    
-    explicit Array(int size); 
-    if(a == b[3]) // 错误，无法进行隐式转换
+```c++
+template<class T>
+class Array{
+public:
+    Array(int size);
+    T& operator[](int index);
+};
+
+bool operator==(const Array<int> &lhs, const Array<int> & rhs);
+Array<int> a(10), b(10);
+if(a == b[3]) //想要写 a[3] == b[3]，但是这时候编译器并不会报错，解决方法是使用explicit关键字
+
+explicit Array(int size); 
+if(a == b[3]) // 错误，无法进行隐式转换
+```
 
 其实还有一种很骚的操作：
 
-    class Array { 
-    public:  
-        class ArraySize {                    // 这个类是新的 
-            public: 
-            ArraySize(int numElements):theSize(numElements){}
-            int size() const { return theSize;}
-        private: 
-            int theSize;
-        };
-        Array(int lowBound, int highBound); 
-        Array(ArraySize size);                  // 注意新的声明
-        ... 
-    }; 
+```c++
+class Array { 
+public:  
+    class ArraySize {                    // 这个类是新的 
+        public: 
+        ArraySize(int numElements):theSize(numElements){}
+        int size() const { return theSize;}
+    private: 
+        int theSize;
+    };
+    Array(int lowBound, int highBound); 
+    Array(ArraySize size);                  // 注意新的声明
+    ... 
+}; 
+```
 
 这样写的代码在Array<int> a(10);的时候，编译器会先通过类型转换转换成ArraySize，然后再进行构造，虽然麻烦很多，效率也低了很多，但是在一定程度上可以避免隐式转换带来的问题
 
@@ -829,3 +833,189 @@ smart pointer 和 const：
         RCPtr<StringValue> value;
     };
 
+**31. 基于多个对象的虚函数**
+
+考虑两个对象碰撞的问题：
+    
+
+    class GameObject{....};
+    class SpaceShip : public GameObject{....};
+    class SpaceStation : public GameObject{....};
+    class Asteroid : public GameObject{....};
+    
+    void checkForCollision(GameObject& object1, GameObject& object2){
+        processCollision(object1, object2);
+    }
+
+当我们调用processCollision的时候，该函数取决于两个不同的对象，但是这个函数并不知道其object1和object2的真实类型，这个时候就要基于多个对象设计虚函数 
+
+解决方法有很多：
+    
+使用虚函数+RTTI：
+
+    class GameObject{
+    public:
+        virtual void collide(GameObject& otherObject) = 0;
+    };
+    class SpaceShip:public GameObject{
+    public:
+        virtual void collide(GameObject& otherObject);
+    };
+    
+    void SpaceShip:collide(GameObject& otherObject){
+        const type_info& objectType = typeid(otherObject);
+        if(objectType == typeid(SpaceShip)){
+            SpaceShip& ss = static_cast<SpaceShip&>(otherObject);
+        }
+        else if(objectType == typeid(SpaceStation)).......
+    }
+
+只使用虚函数：
+    
+
+    class SpaceShip; // forward declaration
+    class SpaceStation;
+    class Asteroid;
+    class GameObject { 
+    public:
+        virtual void collide(GameObject&   otherObject) = 0;
+        virtual void collide(SpaceShip&    otherObject) = 0;
+        virtual void collide(SpaceStation& otherObject) = 0;
+        virtual void collide(Asteroid&     otherObject) = 0;
+        ...
+    };
+
+模拟虚函数表（对继承体系中的函数做一些修改）：
+
+    class SpaceShip : public GameObject { 
+    public:
+        virtual void collide(GameObject&   otherObject);
+        virtual void hitSpaceShip(SpaceShip&    otherObject);
+        virtual void hitSpaceStation(SpaceStation& otherObject);
+        virtual void hitAsteroid(Asteroid&     otherObject);
+        ...
+    };
+
+初始化模拟虚函数表：
+    
+
+    class GameObject { // this is unchanged 
+    public: 
+        virtual void collide(GameObject& otherObject) = 0;
+        ...
+    };
+    
+    class SpaceShip: public GameObject {
+    public:
+        virtual void collide(GameObject& otherObject);
+        // these functions now all take a GameObject parameter
+        virtual void hitSpaceShip(GameObject& spaceShip);
+        virtual void hitSpaceStation(GameObject& spaceStation);
+        virtual void hitAsteroid(GameObject& asteroid);
+        ...
+    };
+    
+    SpaceShip::HitMap * SpaceShip::initializeCollisionMap(){
+        HitMap *phm = new HitMap;
+        (*phm)["SpaceShip"] = &hitSpaceShip;
+        (*phm)["SpaceStation"]= &hitSpaceStation;
+        (*phm)["Asteroid"] = &hitAsteroid;
+        return phm; 
+    }
+
+
+#### 六、杂项
+
+**32. 在将来时态下开发程序**
+
+新的函数会被加入到函数库里面， 将来会出现新的重载（所以要注意哪些含糊的函数调用行为的结果），新的类会加入到继承中，新的环境下运行等。
+
+应该通过代码来描述这些行为，而不仅仅是注释写上。实在拿不定我们类怎么设计的时候，仿照int来写
+
+**33. 将非尾端类设计为抽象类**
+
+如果采用这样的代码：
+
+    class Animal{
+    public:
+        virtual Animal& operator=(const Animal& rhs);
+        ....
+    };
+    class Lizard:public Animal{
+    public:
+        virtual Lizard& operator=(const Animal& rhs);
+    };
+    class Chicken:public Animal{
+    public:
+        virtual Chicken& operator=(const Animal& rhs);
+    }
+
+则会出现我们不愿意出现的类型转换和赋值：
+    
+
+    Animal *pAnimal1 = &liz;
+    Animal *pAnimal2 = &chick;
+    *pAnimal1 = *pAnimal2;      //把一个chick赋值给了一个lizard
+
+但是我们又希望下面的操作是可行的：
+    Animal *pAnimal1 = &liz1;
+    Animal *pAnimal2 = &liz2;
+    *pAnimal1 = *pAnimal2;      //正确，把一个lizard赋值给了一个lizard
+
+解决这个问题最简单的方法是使用dynamic_cast进行类型检测，但是还有一个方法就是把Animal设成抽象类或者创建一个抽象Animal类：
+
+    class AbstractAnimal{
+    protected:
+        AbstractAnimal& operator=(const AbstractAnimal& rhs);
+    public:
+        virtual ~AbstractAnimal() = 0;
+    };
+    
+    class Animal: public AbstractAnimal{
+    public:
+        Animal& operator=(const Animal& rhs);
+    };
+    class Lizard:public AbstractAnimal{
+    public:
+        virtual Lizard& operator=(const Animal& rhs);
+    };
+    class Chicken:public AbstractAnimal{
+    public:
+        virtual Chicken& operator=(const Animal& rhs);
+    }
+
+感觉这个方法以后会非常有用。。。。
+
+**34. 理解如何在同一程序中混合使用C**
+
+名字变换：就是在编译器分别给C++和C不同的前缀，在C语言中，因为没有函数重载，所以编译器没有专门给函数改变名字，但是在C++里面，编译器是要给函数不同的名字的。
+
+C++的extern‘C’可以禁止进行名字变换，例如：
+    
+
+    extern 'C'
+    void drawLine(int x1, int y1, int x2, int y2);
+
+静态初始化：在C++中，静态的类对象和定义会在main执行前执行。
+在编译器中，这种处理方法通常是在main里面默认调用某个函数：
+    
+
+    int main(int argc, char *argv[]){
+        performStaticInitialization();
+    
+        realmain();
+    
+        performStaticDestruction();
+    }
+
+动态内存分配：C++时候new和delete，C是malloc和free
+
+数据结构的兼容性：C无法知道C++的特性
+
+总结下来就是：确保C++和C编译器产生兼容的obj文件，将在两种语言下都是用的函数声明为extern'C'，只要可能，应该用C++写main(),delete，new成对使用，malloc和free成对使用，
+
+**35. 让自己熟悉C++语言标准**
+
+熟悉stl和一些新的C++特性。
+
+在C++运行库中的几乎任何东西都是模板，几乎所有的内容都在命名空间std中
